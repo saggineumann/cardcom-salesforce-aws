@@ -1,0 +1,25 @@
+service: cardcom-webhook-listener
+
+provider:
+  name: aws
+  runtime: nodejs16.x
+  environment:
+    SF_LOGIN_URL: ${SF_LOGIN_URL}
+    SF_USERNAME:  ${SF_USERNAME}
+    SF_PASSWORD:  ${SF_PASSWORD}
+    CARDCOM_SECRET: ${CARDCOM_SECRET}
+functions:
+  recurringDonationWebhookListener:
+    handler: handler.recurringDonationWebhookListener
+    events:
+      - http:
+          path: recurringDonationWebhookListener
+          method: post
+          cors: true
+  donationWebhookListener:
+    handler: handler.donationWebhookListener
+    events:
+      - http:
+          path: donationWebhookListener
+          method: post
+          cors: true
