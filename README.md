@@ -6,7 +6,7 @@ The purpose of this project is to handle incoming webhook payloads from Cardcom 
 
 Serverless is used to deploy the code to AWS.
 
-1. Install Serverless - see [https://www.serverless.com/framework/docs/getting-started](here) . In short: `npm install -g serverless`
+1. Install Serverless - see [here](https://www.serverless.com/framework/docs/getting-started) . In short: `npm install -g serverless`
 
 2. Install AWS CLI.
 
