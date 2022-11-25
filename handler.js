@@ -93,7 +93,7 @@ async function createAllocations(npsp__General_Accounting_Unit__c, npsp__Recurri
 	}
 }
 
-module.exports.donationWebhookListener = (event, context, callback) => {	
+module.exports.donationWebhookListener = async (event, context, callback) => {	
 	try {
 		res.sendStatus(200); // return response fast before Cardcom resends a request
 		const body = event.body;
@@ -117,7 +117,7 @@ module.exports.donationWebhookListener = (event, context, callback) => {
 	}
 };
 
-module.exports.recurringDonationWebhookListener = (event, context, callback) => {	
+module.exports.recurringDonationWebhookListener = async (event, context, callback) => {	
 	try {
 		res.sendStatus(200); // return response fast before Cardcom resends a request
 		const body = event.body;
