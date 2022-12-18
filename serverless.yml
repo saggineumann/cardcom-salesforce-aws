@@ -1,13 +1,14 @@
 service: cardcom-webhook-listener
-
+useDotenv: true
 provider:
   name: aws
   runtime: nodejs16.x
+  timeout: 60
   environment:
-    SF_LOGIN_URL: ${SF_LOGIN_URL}
-    SF_USERNAME:  ${SF_USERNAME}
-    SF_PASSWORD:  ${SF_PASSWORD}
-    CARDCOM_SECRET: ${CARDCOM_SECRET}
+    SF_LOGIN_URL: ${env:SF_LOGIN_URL}
+    SF_USERNAME:  ${env:SF_USERNAME}
+    SF_PASSWORD:  ${env:SF_PASSWORD}
+    CARDCOM_SECRET: ${env:CARDCOM_SECRET}
 functions:
   recurringDonationWebhookListener:
     handler: handler.recurringDonationWebhookListener
