@@ -51,7 +51,7 @@ function getNameFromFullName(fullName) {
 	}
 
 	const nameArray = fullName.split(' ');
-	return { FirstName: nameArray[0], LastName: nameArray.slice(1).join(' ') };
+	return { FirstName: nameArray[0], LastName: nameArray.slice(1).join(' ') || nameArray[0] };
 }
 
 function isPhoneMatch(phone1, phone2) {
