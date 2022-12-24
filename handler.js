@@ -121,7 +121,6 @@ async function createRecurringDonation({
 		npe03__Installments__c: parseInt(NumOfPaymentForTruma) + 1,
 		npe03__Schedule_Type__c: 'Multiply By',
 		npe03__Installment_Period__c: 'Monthly',
-		npsp__Day_of_Month__c: '10',
 		npsp__PaymentMethod__c: 'Credit Card',
 		npsp__Status__c: 'Active'
 	})).id;
