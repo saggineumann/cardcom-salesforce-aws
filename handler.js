@@ -1,5 +1,6 @@
-const bodyParser = require('body-parser');
 const jsforce = require('jsforce');
+
+const NO_PROJECT_DEFAULT_VALUE = 'בחרו פרויקט';
 
 let generalAccountingUnits;
 
@@ -35,7 +36,7 @@ async function initConnection() {
 
 async function getCardComCustomFields() {
 	const customFieldNumber = 'CustomFieldNumber__c';
-	const paramNames = ['ContactId', 'OwnerId'];
+	const paramNames = ['ContactId', 'OwnerId', 'Project'];
 	const [fields] = await sf.sobject('CardCom__c').select(paramNames.map(param => `${param}${customFieldNumber}`).join());
 	// example: { "ContactId": "Custom05", "OwnerId": "Custom07" }
 	return paramNames.reduce((cardcomCustomFields, field) => ({ ...cardcomCustomFields, [field]: `Custom${fields[`${field}${customFieldNumber}`]}` }), {});
@@ -107,39 +108,44 @@ async function getOrCreateSalesforceIdentifiers({ UserEmail, intTo, InvMobile })
 }
 
 async function createRecurringDonation({
-	intTo, DealDate, RecurringOrderID, OwnerId, ContactId, CardMonth: npsp__CardExpirationMonth__c, NumOfPaymentForTruma,
+	intTo, DealDate, RecurringOrderID, OwnerId, ContactId, invNumber, CardMonth: npsp__CardExpirationMonth__c, NumOfPaymentForTruma = '49',
 	CardYear: npsp__CardExpirationYear__c, Lest4Numbers: npsp__CardLast4__c, suminfull: npe03__Amount__c }) {
-	const npe03__Recurring_Donation__c = (await RecurringDonation.create({
-		OwnerId,
-		Name: getDonationName('הוראת קבע', DealDate, intTo),
-		npe03__Amount__c,
-		npsp__CardExpirationMonth__c,
-		npsp__CardExpirationYear__c,
-		npsp__CardLast4__c,
-		npe03__Contact__c: ContactId,
-		npsp__CommitmentId__c: RecurringOrderID,
-		npe03__Installments__c: parseInt(NumOfPaymentForTruma) + 1,
-		npe03__Schedule_Type__c: 'Multiply By',
-		npe03__Installment_Period__c: 'Monthly',
-		npsp__PaymentMethod__c: 'Credit Card',
-		npsp__Status__c: 'Active'
-	})).id;
-
-	console.log('opportunities of recurring donation:', (await Opportunity.find({ npe03__Recurring_Donation__c })), null, 4);
-	const oppPayments = await OppPayment.find({
-		npe01__Paid__c: false,
-		'npe01__Opportunity__r.npe03__Recurring_Donation__r.npsp__CommitmentId__c': RecurringOrderID,
-	}, 'Id, npe01__Opportunity__c')
-	.sort('npe01__Opportunity__r.npsp__Recurring_Donation_Installment_Number__c');
-
-	const opportunityIds = oppPayments.map(({ npe01__Opportunity__c }) => npe01__Opportunity__c);
-	console.log('oppPayments:', JSON.stringify(oppPayments, null, 4))
-	await markPaymentAsPaid(oppPayments[0]);
-
-	return { opportunityIds, recurringDonationId: npe03__Recurring_Donation__c };
+	try {
+		const npe03__Recurring_Donation__c = (await RecurringDonation.create({
+			OwnerId,
+			Name: getDonationName('הוראת קבע', DealDate, intTo),
+			npe03__Amount__c,
+			npsp__CardExpirationMonth__c,
+			npsp__CardExpirationYear__c,
+			npsp__CardLast4__c,
+			npe03__Contact__c: ContactId,
+			CardcomRecurringOrderId__c: RecurringOrderID,
+			npe03__Installments__c: Math.min(parseInt(NumOfPaymentForTruma) + 1, 50),
+			npe03__Schedule_Type__c: 'Multiply By',
+			npe03__Installment_Period__c: 'Monthly',
+			npsp__PaymentMethod__c: 'Credit Card',
+			npsp__Status__c: 'Active'
+		})).id;
+	
+		console.log('opportunities of recurring donation:', (await Opportunity.find({ npe03__Recurring_Donation__c })), null, 4);
+		const [payment] = await OppPayment.find({
+			npe01__Paid__c: false,
+			'npe01__Opportunity__r.npe03__Recurring_Donation__r.CardcomRecurringOrderId__c': RecurringOrderID,
+		}, 'Id, npe01__Opportunity__c')
+		.sort('npe01__Opportunity__r.npsp__Recurring_Donation_Installment_Number__c')
+		.limit(1);
+	
+		console.log('payment', JSON.stringify(payment, null, 4));
+		await Promise.all([setCardcomInvoiceNumberInOpportunity(payment?.npe01__Opportunity__c, invNumber), markPaymentAsPaid({ ...payment })]);
+	
+		return npe03__Recurring_Donation__c;
+	} catch(error) {
+		console.error('createRecurringDonation error:', error);
+		throw error;
+	}
 }
 
-async function createOpportunity({ CardYear, CardMonth, DealDate, ContactId, OwnerId, intTo, suminfull: Amount }) {
+async function createOpportunity({ CardYear, CardMonth, invNumber, DealDate, ContactId, OwnerId, intTo, suminfull: Amount }) {
 	console.log('createOpportunity, DealDate', DealDate, new Date(DealDate));
 	return (await Opportunity.create({
 		Amount,
@@ -148,35 +154,41 @@ async function createOpportunity({ CardYear, CardMonth, DealDate, ContactId, Own
 		npe01__Contact_Id_for_Role__c: ContactId,
 		Payment_Method__c: '3', // Credit Card TODO: PAYPAL SUPPORT?
 		CreditCardExpirationDate__c: getCreditCardExpirationDate(CardYear, CardMonth),
+		CardcomInvoiceNumber__c: invNumber,
 		CloseDate: new Date(DealDate),
-		StageName: 'Closed Won'
+		StageName: 'Closed Won',
+		Create_Invoice__c: false
 	})).id;
 }
 
 async function getOrCreateGeneralAccountingUnit(project) {
 	let generalAccountingUnitId = generalAccountingUnits[project];
+	console.log('getOrCreateGeneralAccountingUnit, project:', project, ', generalAccountingUnitId:', generalAccountingUnitId, ', generalAccountingUnits:', JSON.stringify(generalAccountingUnits, null, 4));
 	if(!generalAccountingUnitId) {
 		// A new project has been created by master (Cardcom), creating a new GAU for it
 		generalAccountingUnitId = (await GeneralAccountingUnit.create({ Name: project, npsp__Active__c: true })).id;
 		generalAccountingUnits[project] = generalAccountingUnitId;
+		console.log('created new generalAccountingUnitId:', generalAccountingUnitId);
 	}
 
 	return generalAccountingUnitId;
 }
 
-async function createAllocations(npsp__General_Accounting_Unit__c, npsp__Recurring_Donation__c, opportunityIds,
+async function createAllocation(npsp__General_Accounting_Unit__c, npsp__Opportunity__c, npsp__Recurring_Donation__c,
 									{ Custom07: OwnerId, suminfull: npsp__Amount__c }) {
 	try {
-		return await Allocation.create(opportunityIds.map(npsp__Opportunity__c => ({
+		console.log('createAllocation()', npsp__General_Accounting_Unit__c, npsp__Opportunity__c, npsp__Recurring_Donation__c, OwnerId, npsp__Amount__c);
+
+		return await Allocation.create({
 			OwnerId,
-			npsp__Amount__c,
+			npsp__General_Accounting_Unit__c,
 			npsp__Opportunity__c,
 			npsp__Recurring_Donation__c,
-			npsp__General_Accounting_Unit__c,
+			npsp__Amount__c,
 			npsp__Percent__c: 100
-		})));
+		});
 	} catch(error) {
-		console.error('createAllocations error', error);
+		console.error('createAllocation error', error);
 		throw error;
 	}
 }
@@ -206,6 +218,14 @@ async function assembleBody(urlEncodedBody) {
 	}
 }
 
+async function setCardcomInvoiceNumberInOpportunity(Id, CardcomInvoiceNumber__c) {
+	console.log('setCardcomInvoiceNumberInOpportunity, Id:', Id, ', CardcomInvoiceNumber__c:', CardcomInvoiceNumber__c);
+	if(Id && CardcomInvoiceNumber__c) {
+		const updateResult = await Opportunity.update({ Id, CardcomInvoiceNumber__c });
+		console.log('InvoiceNumber updateResult:', JSON.stringify(updateResult, null, 4));
+	}
+}
+
 async function markPaymentAsPaid(payment) {
 	console.log('payment:', JSON.stringify(payment, null, 4));
 	if(payment) {
@@ -213,7 +233,7 @@ async function markPaymentAsPaid(payment) {
 		payment.npe01__Paid__c = true;
 		payment.npe01__Payment_Method__c = '3' // credit card
 		payment.npe01__Payment_Date__c = Date.now();
-		console.log('payment to update:', JSON.stringify(payment));
+		console.log('payment to update after changes:', JSON.stringify(payment));
 		const updateResult = await OppPayment.update(payment);
 		console.log('payment updateResult:', JSON.stringify(updateResult, null, 4));
 	}
@@ -224,27 +244,33 @@ module.exports.donationWebhookListener = async event => {
 		await initConnection();
 		console.log('url encoded body:', event.body);
 		const body = await assembleBody(event.body);
-		const { RecurringOrderID, Firstname: project } = body;
+		const { RecurringOrderID, Project } = body;
 		console.log('body:', JSON.stringify(body, null, 4));
-		let recurringDonationId, opportunityIds;
+		let recurringDonationId, opportunityId;
 		if(RecurringOrderID) {
-			const createRecurringDonationResult = await createRecurringDonation(body);
-			recurringDonationId = createRecurringDonationResult.recurringDonationId;
-			console.log('recurringDonationId:', recurringDonationId);
-			opportunityIds = createRecurringDonationResult.opportunityIds;
+			recurringDonationId = await createRecurringDonation(body);
+			console.log('created recurring donation with id:', recurringDonationId);
 		} else {
-			opportunityIds = [await createOpportunity(body)];
+			opportunityId = await createOpportunity(body);
+			console.log('created opportunity with id:', opportunityId);
 		}
 
-		console.log('opportunityIds:', opportunityIds);
-
-		if(project) {
-			await createAllocations(await getOrCreateGeneralAccountingUnit(project), recurringDonationId, opportunityIds, body);
+		if(Project && Project !== NO_PROJECT_DEFAULT_VALUE) {
+			const allocationResult = await createAllocation(await getOrCreateGeneralAccountingUnit(Project), opportunityId, recurringDonationId, body);
+			console.log('new allocation result:', JSON.stringify(allocationResult, null, 4));
 		}
 
 		return { statusCode: 200 };
 	} catch(error) {
 		console.error('error', error);
+		for (duplicateError of ['DUPLICATE_VALUE: duplicate value found: CardcomRecurringOrderId__c', 'DUPLICATE_VALUE: duplicate value found: CardcomInvoiceNumber__c']) {
+			if(error.toString().includes(duplicateError)) {
+				console.log('Donation was already created on a previous request, everything is fine');
+				return { statusCode: 200 };
+			}
+		}
+
+		console.error('unresolved error');
 		return { statusCode: 500, body: error.toString() };
 	}
 };
@@ -256,11 +282,11 @@ module.exports.recurringDonationWebhookListener = async event => {
 		const body = urlEncodedToObject(event.body);
 		const { RecordType, Secret, Status, RecurringId } = body;		
 		console.log('recurringDonation body:', JSON.stringify(body, null, 4));
-		console.log('RecordType:', RecordType, ', Status:', Status, ', Secret:', Secret, ', ', Secret === CARDCOM_SECRET);
-		if(RecordType === 'DetailRecurring' && Status === 'SUCCESSFUL' && (!Secret || Secret === CARDCOM_SECRET)) {
+		console.log('RecordType:', RecordType, ', Status:', Status, ', does secret match:', Secret === CARDCOM_SECRET);
+		if(RecordType === 'DetailRecurring' && Status === 'SUCCESSFUL' && Secret === CARDCOM_SECRET) {
 			const [payment] = await OppPayment.find({
 				npe01__Paid__c: false,
-				'npe01__Opportunity__r.npe03__Recurring_Donation__r.npsp__CommitmentId__c': RecurringId,
+				'npe01__Opportunity__r.npe03__Recurring_Donation__r.CardcomRecurringOrderId__c': RecurringId,
 			}, 'Id, npe01__Payment_Amount__c')
 				.sort('npe01__Opportunity__r.npsp__Recurring_Donation_Installment_Number__c')
 				.limit(1);
